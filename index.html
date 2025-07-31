@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>QR Scanner via WebSocket</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; background: #111; color: #fff; margin: 0; }
+    video, canvas { display: block; margin: 1em auto; max-width: 480px; }
+    #output { font-size: 1.2em; margin-top: 0.5em; }
+  </style>
+</head>
+<body>
+  <h1>QR Scanner</h1>
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas" style="display:none;"></canvas>
+  <div id="output">Initializing...</div>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const output = document.getElementById('output');
+
+    const ws = new WebSocket(`ws${location.protocol === 'https:' ? 's' : ''}://${location.host}/ws`);
+    ws.onopen = () => { output.textContent = 'WebSocket connected, starting camera…'; initCamera(); };
+    ws.onmessage = msg => {
+      try {
+        const data = JSON.parse(msg.data);
+        if (Array.isArray(data.codes) && data.codes.length) {
+          output.textContent = 'QR Code(s): ' + data.codes.join(', ');
+        } else {
+          output.textContent = 'Scanning…';
+        }
+      } catch (e) {
+        console.error('Invalid JSON from server:', e);
+      }
+    };
+    ws.onclose = () => output.textContent = 'WebSocket disconnected.';
+    ws.onerror = err => console.error('WebSocket error:', err);
+
+    async function initCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        video.srcObject = stream;
+        video.onloadedmetadata = () => { video.play(); captureLoop(); };
+      } catch (e) {
+        output.textContent = 'Camera error: ' + e;
+      }
+    }
+
+    function captureLoop() {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0);
+      // Send JPEG frame every 500ms
+      canvas.toBlob(blob => {
+        if (ws.readyState === WebSocket.OPEN) {
+          const reader = new FileReader();
+          reader.onloadend = () => ws.send(reader.result);
+          reader.readAsDataURL(blob);
+        }
+      }, 'image/jpeg', 0.7);
+      setTimeout(captureLoop, 500);
+    }
+  </script>
+</body>
+</html>
